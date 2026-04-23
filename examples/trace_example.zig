@@ -1,15 +1,10 @@
 const std = @import("std");
 const logging = @import("zig-logging");
 
-// 模拟一个简单的 TraceContext 提供者
+// 模拟 TraceContext 提供者
 const SimpleTraceProvider = struct {
     trace_id: []const u8,
     request_id: []const u8,
-
-    const vtable = logging.TraceContextProvider{
-        .ptr = undefined,
-        .current = getCurrent,
-    };
 
     fn getCurrent(ptr: *anyopaque) logging.TraceContext {
         const self: *@This() = @ptrCast(@alignCast(ptr));
@@ -29,70 +24,55 @@ const SimpleTraceProvider = struct {
 };
 
 pub fn main() !void {
-    
-    // 创建控制台 sink
-    var console = logging.sinks.Console.init(.debug, .pretty);
-    
-    // 创建 trace provider
+    // 使用 TraceConsoleSink — 输出 [HH:MM:SS LVL] TraceId:xxx|Message|Field:value 格式
+    var trace_console = logging.sinks.TraceConsole.init(.debug);
+
     var trace_provider = SimpleTraceProvider{
-        .trace_id = "trc_abc123xyz",
+        .trace_id = "05b287fe7fd7d54b",
         .request_id = "req_001",
     };
 
-    // 创建带 trace context 的 logger
-    var logger = logging.Logger.initWithOptions(console.asLogSink(), .{
+    var logger = logging.Logger.initWithOptions(trace_console.asLogSink(), .{
         .min_level = .debug,
         .trace_context_provider = trace_provider.provider(),
     });
     defer logger.deinit();
 
-    std.debug.print("\n=== 示例 1: 普通日志（自动附加 traceId 和 requestId）===\n", .{});
-    logger.child("app").info("User authentication started", &.{
-        logging.LogField.string("username", "alice"),
-        logging.LogField.string("ip", "192.168.1.100"),
+    // 1. Request started
+    const request_log = logger.child("request");
+    request_log.logKind(.info, .request, "Request started", &.{
+        logging.LogField.string("Method", "CHAT"),
+        logging.LogField.string("Path", "/chat"),
     });
 
-    std.debug.print("\n=== 示例 2: Request Span 格式（特殊格式化）===\n", .{});
-    const request_logger = logger.child("request");
-    request_logger.logKind(.info, .request, "Request completed", &.{
-        logging.LogField.string("method", "GET"),
-        logging.LogField.string("path", "/api/users"),
-        logging.LogField.string("query", "page=1&limit=10"),
-        logging.LogField.uint("status", 200),
-        logging.LogField.uint("duration_ms", 45),
+    // 2. Method ENTRY
+    const method_log = logger.child("agent");
+    method_log.logKind(.debug, .method, "ENTRY", &.{
+        logging.LogField.string("method", "AgentLoop.Run"),
+        logging.LogField.string("Params", "{\"messages\":2,\"tools\":23}"),
     });
 
-    std.debug.print("\n=== 示例 3: Method Trace 格式（方法追踪）===\n", .{});
-    const method_logger = logger.child("method");
-    method_logger.logKind(.debug, .method, "ENTRY", &.{
-        logging.LogField.string("method", "UserService.authenticate"),
-    });
-    
-    // 模拟方法执行
-    
-    method_logger.logKind(.debug, .method, "EXIT", &.{
-        logging.LogField.string("method", "UserService.authenticate"),
-        logging.LogField.uint("duration_ms", 10),
+    // 3. Method ERROR
+    method_log.logKind(.@"error", .method, "ERROR", &.{
+        logging.LogField.string("method", "AgentLoop.Run"),
+        logging.LogField.string("Status", "FAIL"),
+        logging.LogField.uint("Duration", 2482),
+        logging.LogField.string("Type", "SYNC"),
+        logging.LogField.string("Exception", "ResponsesEmptyOutput"),
+        logging.LogField.string("ErrorCode", "ResponsesEmptyOutput"),
     });
 
-    std.debug.print("\n=== 示例 4: Step Span 格式（步骤追踪）===\n", .{});
-    const db_logger = logger.child("database");
-    db_logger.logKind(.info, .step, "Step started", &.{
-        logging.LogField.string("step", "query_users"),
-    });
-    
-    db_logger.logKind(.info, .step, "Step completed", &.{
-        logging.LogField.string("step", "query_users"),
-        logging.LogField.uint("rows", 42),
-        logging.LogField.uint("duration_ms", 23),
+    // 4. Step completed
+    const db_log = logger.child("database");
+    db_log.logKind(.info, .step, "Step completed", &.{
+        logging.LogField.string("Step", "query_users"),
+        logging.LogField.uint("Duration", 45),
     });
 
-    std.debug.print("\n=== 示例 5: 错误日志（带 error_code）===\n", .{});
-    logger.child("app").@"error"("Database connection failed", &.{
-        logging.LogField.string("error_code", "DB_CONN_TIMEOUT"),
-        logging.LogField.string("host", "db.example.com"),
-        logging.LogField.uint("port", 5432),
+    // 5. Processing message
+    const msg_log = logger.child("processor");
+    msg_log.info("Processing message", &.{
+        logging.LogField.string("user_id", "user123"),
+        logging.LogField.uint("message_length", 256),
     });
-
-    std.debug.print("\n=== 完成 ===\n", .{});
 }

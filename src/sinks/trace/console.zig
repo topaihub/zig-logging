@@ -47,13 +47,12 @@ pub const TraceConsoleSink = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const allocator = fba.allocator();
 
-        var list = std.array_list.Managed(u8).init(allocator);
-        var unmanaged = list.moveToUnmanaged();
-        var writer = std.Io.Writer.fromArrayList(&unmanaged);
+        var allocating_writer = std.Io.Writer.Allocating.init(allocator);
+        const writer = &allocating_writer.writer;
 
-        trace_formatter.formatRecord(&writer, record) catch return;
+        trace_formatter.formatRecord(writer, record) catch return;
 
-        const result = writer.toArrayList();
+        const result = allocating_writer.toArrayList();
 
         // 使用 Threaded Io 输出到 stdout
         var local_buffer: [4096]u8 = undefined;
@@ -68,16 +67,7 @@ pub const TraceConsoleSink = struct {
         stdout_writer.interface.flush() catch return;
     }
 
-    pub fn flush(_: *Self) void {
-        var local_buffer: [4096]u8 = undefined;
-        var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
-        defer threaded.deinit();
-        const io = threaded.io();
-
-        var stdout_file = std.Io.File.stdout();
-        var stdout_writer = stdout_file.writer(io, &local_buffer);
-        stdout_writer.interface.flush() catch {};
-    }
+    pub fn flush(_: *Self) void {}
 
     fn writeErased(ptr: *anyopaque, record: *const LogRecord) void {
         const self: *Self = @ptrCast(@alignCast(ptr));
