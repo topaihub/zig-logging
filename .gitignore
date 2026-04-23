@@ -1,0 +1,21 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+zig-pkg/
+
+# Backup files
+.backup/
+
+# Log files
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated docs (if auto-generated)
+docs/
