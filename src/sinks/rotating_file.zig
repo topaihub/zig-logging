@@ -96,14 +96,12 @@ pub const RotatingFileSink = struct {
         defer self.mutex.unlock();
 
         // Render log line
-        var managed = std.array_list.Managed(u8).init(self.allocator);
-        var buf = managed.moveToUnmanaged();
-        defer buf.deinit(self.allocator);
-        var w = std.Io.Writer.fromArrayList(&buf);
+        var allocating_writer = std.Io.Writer.Allocating.init(self.allocator);
+        const w = &allocating_writer.writer;
 
         switch (self.config.format) {
             .json => {
-                rec.writeJson(&w) catch {
+                rec.writeJson(w) catch {
                     self.dropped_records += 1;
                     return;
                 };
@@ -153,10 +151,12 @@ pub const RotatingFileSink = struct {
                 }
             },
         }
-        buf.append(self.allocator, '\n') catch {
+        w.writeByte('\n') catch {
             self.dropped_records += 1;
             return;
         };
+
+        const rendered = allocating_writer.toArrayList();
 
         // Get today's date
         const io = std.Io.Threaded.global_single_threaded.*.io();
@@ -167,7 +167,7 @@ pub const RotatingFileSink = struct {
 
         // Check if we need a new file
         const date_changed = !std.mem.eql(u8, &self.current_date, &date_buf);
-        const size_exceeded = self.current_size + buf.items.len > self.config.max_file_bytes;
+        const size_exceeded = self.current_size + rendered.items.len > self.config.max_file_bytes;
 
         if (self.current_file == null or date_changed or size_exceeded) {
             if (self.current_file) |*f| {
@@ -215,11 +215,11 @@ pub const RotatingFileSink = struct {
         // Write
         if (self.current_file) |f| {
             const io_write = std.Io.Threaded.global_single_threaded.*.io();
-            f.writeStreamingAll(io_write, buf.items) catch {
+            f.writeStreamingAll(io_write, rendered.items) catch {
                 self.dropped_records += 1;
                 return;
             };
-            self.current_size += buf.items.len;
+            self.current_size += rendered.items.len;
             self.total_records += 1;
         }
     }

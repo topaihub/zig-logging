@@ -56,7 +56,7 @@ pub const LogConfig = struct {
     pub const RotatingConfig = struct {
         log_dir: []const u8 = "logs",
         prefix: []const u8 = "app",
-        max_file_bytes: u64 = 100 * 1024 * 1024,
+        max_file_bytes: u64 = 10 * 1024 * 1024,
         format: sink_impls.rotating_file.LogFormat = .text,
     };
 };
