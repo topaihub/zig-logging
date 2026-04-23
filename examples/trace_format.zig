@@ -29,7 +29,7 @@ pub fn main() !void {
     std.debug.print("[时间 级别] TraceId:xxx|Message|Field:value\n\n", .{});
 
     // 创建 TraceTextFileSink - 这会生成 TraceId:xxx|Message|Field:value 格式
-    var trace_sink = try logging.TraceTextFileSink.init(
+    var trace_sink = try logging.sinks.TraceTextFile.init(
         allocator,
         "trace.log",
         null, // 无大小限制

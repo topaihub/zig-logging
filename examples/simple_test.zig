@@ -2,7 +2,7 @@ const std = @import("std");
 const logging = @import("zig-logging");
 
 pub fn main() !void {
-    var sink = logging.ConsoleSink.init(.debug, .compact);
+    var sink = logging.sinks.Console.init(.debug, .compact);
     var logger = logging.Logger.init(sink.asLogSink(), .debug);
     defer logger.deinit();
 

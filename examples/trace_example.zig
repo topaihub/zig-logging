@@ -29,10 +29,9 @@ const SimpleTraceProvider = struct {
 };
 
 pub fn main() !void {
-    const io_provider = logging.defaultProvider();
     
     // 创建控制台 sink
-    var console = logging.ConsoleSink.init(.debug, .pretty, io_provider);
+    var console = logging.sinks.Console.init(.debug, .pretty);
     
     // 创建 trace provider
     var trace_provider = SimpleTraceProvider{
@@ -44,19 +43,18 @@ pub fn main() !void {
     var logger = logging.Logger.initWithOptions(console.asLogSink(), .{
         .min_level = .debug,
         .trace_context_provider = trace_provider.provider(),
-        .io_provider = io_provider,
     });
     defer logger.deinit();
 
     std.debug.print("\n=== 示例 1: 普通日志（自动附加 traceId 和 requestId）===\n", .{});
-    logger.info("User authentication started", &.{
+    logger.child("app").info("User authentication started", &.{
         logging.LogField.string("username", "alice"),
         logging.LogField.string("ip", "192.168.1.100"),
     });
 
     std.debug.print("\n=== 示例 2: Request Span 格式（特殊格式化）===\n", .{});
     const request_logger = logger.child("request");
-    request_logger.log(.info, .request, "request", "Request completed", &.{
+    request_logger.logKind(.info, .request, "Request completed", &.{
         logging.LogField.string("method", "GET"),
         logging.LogField.string("path", "/api/users"),
         logging.LogField.string("query", "page=1&limit=10"),
@@ -66,32 +64,31 @@ pub fn main() !void {
 
     std.debug.print("\n=== 示例 3: Method Trace 格式（方法追踪）===\n", .{});
     const method_logger = logger.child("method");
-    method_logger.log(.debug, .method, "method", "ENTRY", &.{
+    method_logger.logKind(.debug, .method, "ENTRY", &.{
         logging.LogField.string("method", "UserService.authenticate"),
     });
     
     // 模拟方法执行
-    std.time.sleep(10 * std.time.ns_per_ms);
     
-    method_logger.log(.debug, .method, "method", "EXIT", &.{
+    method_logger.logKind(.debug, .method, "EXIT", &.{
         logging.LogField.string("method", "UserService.authenticate"),
         logging.LogField.uint("duration_ms", 10),
     });
 
     std.debug.print("\n=== 示例 4: Step Span 格式（步骤追踪）===\n", .{});
     const db_logger = logger.child("database");
-    db_logger.log(.info, .step, "database", "Step started", &.{
+    db_logger.logKind(.info, .step, "Step started", &.{
         logging.LogField.string("step", "query_users"),
     });
     
-    db_logger.log(.info, .step, "database", "Step completed", &.{
+    db_logger.logKind(.info, .step, "Step completed", &.{
         logging.LogField.string("step", "query_users"),
         logging.LogField.uint("rows", 42),
         logging.LogField.uint("duration_ms", 23),
     });
 
     std.debug.print("\n=== 示例 5: 错误日志（带 error_code）===\n", .{});
-    logger.err("Database connection failed", &.{
+    logger.child("app").@"error"("Database connection failed", &.{
         logging.LogField.string("error_code", "DB_CONN_TIMEOUT"),
         logging.LogField.string("host", "db.example.com"),
         logging.LogField.uint("port", 5432),

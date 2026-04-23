@@ -3,7 +3,7 @@ const logging = @import("zig-logging");
 
 pub fn main() !void {
     // 创建控制台 sink
-    var console = logging.ConsoleSink.init(.debug, .pretty);
+    var console = logging.sinks.Console.init(.debug, .pretty);
     
     // 创建 logger
     var logger = logging.Logger.init(console.asLogSink(), .debug);

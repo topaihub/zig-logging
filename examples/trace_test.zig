@@ -26,7 +26,7 @@ const SimpleTraceProvider = struct {
 pub fn main() !void {
     std.debug.print("\n=== 测试 1: Compact 格式 ===\n", .{});
     {
-        var console = logging.ConsoleSink.init(.debug, .compact);
+        var console = logging.sinks.Console.init(.debug, .compact);
         var trace_provider = SimpleTraceProvider{
             .trace_id = "trace-abc-123",
             .request_id = "req-xyz-789",
@@ -46,7 +46,7 @@ pub fn main() !void {
 
     std.debug.print("\n=== 测试 2: Pretty 格式 ===\n", .{});
     {
-        var console = logging.ConsoleSink.init(.debug, .pretty);
+        var console = logging.sinks.Console.init(.debug, .pretty);
         var trace_provider = SimpleTraceProvider{
             .trace_id = "trace-def-456",
             .request_id = "req-uvw-012",
@@ -66,7 +66,7 @@ pub fn main() !void {
 
     std.debug.print("\n=== 测试 3: Request 类型 (Pretty 格式) ===\n", .{});
     {
-        var console = logging.ConsoleSink.init(.info, .pretty);
+        var console = logging.sinks.Console.init(.info, .pretty);
         var trace_provider = SimpleTraceProvider{
             .trace_id = "trace-ghi-789",
             .request_id = "req-rst-345",
@@ -78,7 +78,7 @@ pub fn main() !void {
         defer logger.deinit();
 
         const request_logger = logger.child("request");
-        request_logger.log(.info, .request, "Request completed", &.{
+        request_logger.logKind(.info, .request, "Request completed", &.{
             logging.LogField.string("method", "POST"),
             logging.LogField.string("path", "/api/orders"),
             logging.LogField.string("query", ""),
@@ -87,7 +87,7 @@ pub fn main() !void {
 
     std.debug.print("\n=== 测试 4: Method Trace (Pretty 格式) ===\n", .{});
     {
-        var console = logging.ConsoleSink.init(.debug, .pretty);
+        var console = logging.sinks.Console.init(.debug, .pretty);
         var trace_provider = SimpleTraceProvider{
             .trace_id = "trace-jkl-012",
             .request_id = "req-mno-678",
@@ -99,11 +99,11 @@ pub fn main() !void {
         defer logger.deinit();
 
         const method_logger = logger.child("method");
-        method_logger.log(.debug, .method, "ENTRY", &.{
+        method_logger.logKind(.debug, .method, "ENTRY", &.{
             logging.LogField.string("method", "OrderService.createOrder"),
         });
         
-        method_logger.log(.debug, .method, "EXIT", &.{
+        method_logger.logKind(.debug, .method, "EXIT", &.{
             logging.LogField.string("method", "OrderService.createOrder"),
         });
     }
