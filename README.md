@@ -1,8 +1,10 @@
+[中文](README_CN.md) | English
+
 # zig-logging
 
-结构化日志库。基于 vtable 接口的 sink 插件体系。Zig 0.16。
+Structured logging library. Plugin-based sink system built on vtable interfaces. Zig 0.16.
 
-## 快速开始
+## Quick Start
 
 ```zig
 const logging = @import("zig-logging");
@@ -22,17 +24,17 @@ pub fn main() !void {
 }
 ```
 
-输出：
+Output:
 
 ```
 2026-04-23T03:43:58.690Z  INFO app: started version="1.0.0"
 ```
 
-## 配置方式
+## Configuration
 
-`logging.create()` 一行搞定。所有选项都有默认值，按需开启。
+`logging.create()` does it all in one line. All options have defaults — enable only what you need.
 
-### 只要控制台
+### Console Only
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -42,9 +44,9 @@ var managed = try logging.create(allocator, .{
 defer managed.deinit();
 ```
 
-### trace 格式控制台
+### Trace Format Console
 
-输出 `[HH:MM:SS LVL] TraceId:xxx|Message|Field:value` 格式：
+Outputs `[HH:MM:SS LVL] TraceId:xxx|Message|Field:value` format:
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -54,16 +56,16 @@ var managed = try logging.create(allocator, .{
 defer managed.deinit();
 ```
 
-输出：
+Output:
 
 ```
 [03:33:24 INF] TraceId:05b287fe|Request started|Method:CHAT|Path:/chat
 [03:33:24 ERR] TraceId:05b287fe|ERROR|method:AgentLoop.Run|Status:FAIL|Duration:2482
 ```
 
-### 按日滚动文件
+### Daily Rotating File
 
-每天一个新文件，超过指定大小自动分文件：
+One new file per day, automatically split when exceeding the specified size:
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -71,24 +73,24 @@ var managed = try logging.create(allocator, .{
     .rotating = .{
         .log_dir = "logs",
         .prefix = "myapp",
-        .max_file_bytes = 10 * 1024 * 1024,  // 10MB，默认值
+        .max_file_bytes = 10 * 1024 * 1024,  // 10MB, default
         .format = .text,                       // text / json
     },
 });
 defer managed.deinit();
 ```
 
-生成的文件：
+Generated files:
 
 ```
 logs/
-├── myapp-2026-04-23.log       ← 当天第一个文件
-├── myapp-2026-04-23.1.log     ← 超过 10MB 后自动分文件
+├── myapp-2026-04-23.log       ← first file of the day
+├── myapp-2026-04-23.1.log     ← auto-split after exceeding 10MB
 ├── myapp-2026-04-23.2.log
-└── myapp-2026-04-24.log       ← 第二天自动切换新文件
+└── myapp-2026-04-24.log       ← automatically switches to a new file the next day
 ```
 
-### 控制台 + 文件同时输出
+### Console + File Simultaneous Output
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -102,9 +104,9 @@ var managed = try logging.create(allocator, .{
 defer managed.deinit();
 ```
 
-日志同时输出到控制台和文件，自动组合，不需要手动创建 MultiSink。
+Logs are output to both console and file simultaneously, combined automatically — no need to manually create a MultiSink.
 
-### trace 控制台 + trace 文件
+### Trace Console + Trace File
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -118,7 +120,7 @@ var managed = try logging.create(allocator, .{
 defer managed.deinit();
 ```
 
-### JSON Lines 文件
+### JSON Lines File
 
 ```zig
 var managed = try logging.create(allocator, .{
@@ -131,50 +133,50 @@ var managed = try logging.create(allocator, .{
 defer managed.deinit();
 ```
 
-### 零配置
+### Zero Configuration
 
-不传任何选项，默认控制台 pretty 格式：
+No options needed — defaults to console pretty format:
 
 ```zig
 var managed = try logging.create(allocator, .{});
 defer managed.deinit();
 ```
 
-## 配置参数一览
+## Configuration Reference
 
 ```zig
 logging.create(allocator, .{
-    .level = .info,              // 全局最低级别：trace/debug/info/warn/error/fatal
-    .console = .{                // 控制台输出（可选）
+    .level = .info,              // Global minimum level: trace/debug/info/warn/error/fatal
+    .console = .{                // Console output (optional)
         .style = .pretty,        //   pretty / compact / json
     },
-    .trace_console = .{},        // trace 格式控制台（可选，和 console 二选一）
-    .file = .{                   // JSON Lines 文件（可选）
+    .trace_console = .{},        // Trace format console (optional, mutually exclusive with console)
+    .file = .{                   // JSON Lines file (optional)
         .path = "app.jsonl",
-        .max_bytes = null,        //   null = 不限大小
+        .max_bytes = null,        //   null = unlimited size
     },
-    .trace_file = .{             // trace 格式文件（可选）
+    .trace_file = .{             // Trace format file (optional)
         .path = "trace.log",
         .max_bytes = null,
     },
-    .rotating = .{               // 按日滚动文件（可选）
-        .log_dir = "logs",        //   日志目录（自动创建）
-        .prefix = "app",          //   文件名前缀
-        .max_file_bytes = 10MB,   //   单文件最大大小，超过自动分文件
+    .rotating = .{               // Daily rotating file (optional)
+        .log_dir = "logs",        //   Log directory (auto-created)
+        .prefix = "app",          //   Filename prefix
+        .max_file_bytes = 10MB,   //   Max size per file, auto-split when exceeded
         .format = .text,          //   text / json
     },
-    .redact = .safe,             // 脱敏模式：safe / none
-    .trace_provider = provider,  // TraceContext 提供者（可选）
+    .redact = .safe,             // Redaction mode: safe / none
+    .trace_provider = provider,  // TraceContext provider (optional)
 });
 ```
 
-## 日志 API
+## Logging API
 
 ```zig
-// 创建子系统 logger
+// Create a subsystem logger
 var log = managed.logger.child("module_name");
 
-// 基本日志
+// Basic logging
 log.trace("message", &.{});
 log.debug("message", &.{});
 log.info("message", &.{ logging.LogField.string("key", "value") });
@@ -182,20 +184,20 @@ log.warn("message", &.{});
 log.@"error"("message", &.{});
 log.fatal("message", &.{});
 
-// 带类型的日志（trace 格式用）
+// Typed logging (used with trace format)
 log.logKind(.info, .request, "Request started", &.{
     logging.LogField.string("Method", "GET"),
     logging.LogField.string("Path", "/api/users"),
 });
 
-// 嵌套子系统
+// Nested subsystems
 var child = log.child("sub_module");  // → "module_name/sub_module"
 
-// 附加默认字段（每条日志自动携带）
+// Attach default fields (automatically included in every log entry)
 var enriched = log.withField(logging.LogField.string("env", "prod"));
 ```
 
-## 字段类型
+## Field Types
 
 ```zig
 logging.LogField.string("key", "value")
@@ -203,51 +205,51 @@ logging.LogField.int("count", -42)
 logging.LogField.uint("port", 8080)
 logging.LogField.boolean("active", true)
 logging.LogField.float("ratio", 0.95)
-logging.LogField.sensitiveString("token", "secret")  // 自动脱敏
+logging.LogField.sensitiveString("token", "secret")  // auto-redacted
 ```
 
-## 架构
+## Architecture
 
 ```
 src/
-├── core/           接口 + 基础类型（稳定层）
-│   ├── sink.zig    LogSink vtable 接口
-│   ├── level.zig   LogLevel 枚举
+├── core/           Interfaces + base types (stable layer)
+│   ├── sink.zig    LogSink vtable interface
+│   ├── level.zig   LogLevel enum
 │   ├── record.zig  LogRecord, LogField
-│   └── redact.zig  脱敏工具
-├── sinks/          可插拔 sink 实现
+│   └── redact.zig  Redaction utilities
+├── sinks/          Pluggable sink implementations
 │   ├── console.zig
 │   ├── jsonl_file.zig
-│   ├── rotating_file.zig   ← 按日滚动 + 按大小分文件
-│   ├── memory.zig          ← 测试用
-│   ├── multi.zig           ← 组合多个 sink
+│   ├── rotating_file.zig   ← daily rotation + size-based splitting
+│   ├── memory.zig          ← for testing
+│   ├── multi.zig           ← combines multiple sinks
 │   └── trace/
-│       ├── console.zig     ← trace 格式控制台
-│       ├── text_file.zig   ← trace 格式文件
+│       ├── console.zig     ← trace format console
+│       ├── text_file.zig   ← trace format file
 │       └── formatter.zig
-├── config.zig      ← logging.create() 一行配置入口
+├── config.zig      ← logging.create() one-line config entry point
 ├── logger.zig      Logger + SubsystemLogger
-└── root.zig        导出
+└── root.zig        Exports
 ```
 
-## 构建
+## Build
 
 ```bash
-zig build              # 构建
-zig build test         # 测试
-zig build run-example  # 运行 basic 示例
+zig build              # build
+zig build test         # test
+zig build run-example  # run basic example
 ```
 
-## 新增 Sink
+## Adding a New Sink
 
-参考 `references/sink-pattern.md`，实现 LogSink 的 4 个 vtable 方法即可。
+Refer to `references/sink-pattern.md` — just implement the 4 vtable methods of LogSink.
 
-## AI 开发指引
+## AI Development Guide
 
-- `CLAUDE.md` / `AGENTS.md` — 入口，指向 references/RULES.md
-- `references/RULES.md` — 红线、验证命令、架构图、文档索引
-- `references/sink-pattern.md` — 新增 sink 的完整模板
-- `references/zig016.md` — Zig 0.16 关键变更
+- `CLAUDE.md` / `AGENTS.md` — entry point, links to references/RULES.md
+- `references/RULES.md` — red lines, verification commands, architecture diagram, doc index
+- `references/sink-pattern.md` — complete template for adding a new sink
+- `references/zig016.md` — key changes in Zig 0.16
 - `references/error-handling.md` / `memory.md` / `type-patterns.md` / `testing.md`
 
 ## License
