@@ -52,7 +52,7 @@ pub const RotatingFileSink = struct {
         self.current_file = null;
     }
 
-    pub fn sink(self: *Self) LogSink {
+    pub fn asLogSink(self: *Self) LogSink {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 

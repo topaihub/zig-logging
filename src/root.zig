@@ -33,6 +33,12 @@ pub const RotatingFileSinkConfig = @import("sinks/rotating_file.zig").RotatingFi
 pub const LogFormat = @import("sinks/rotating_file.zig").LogFormat;
 pub const TraceTextFileSinkOptions = @import("sinks/trace/text_file.zig").TraceTextFileSinkOptions;
 
+// ── 快速创建（推荐入口）──
+const config_mod = @import("config.zig");
+pub const LogConfig = config_mod.LogConfig;
+pub const ManagedLogger = config_mod.ManagedLogger;
+pub const create = config_mod.create;
+
 test {
     std.testing.refAllDecls(@This());
 }
