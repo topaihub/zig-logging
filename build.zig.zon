@@ -3,6 +3,12 @@
     .version = "0.1.0",
     .fingerprint = 0xca9562fa9fcfd475,
     .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .@"zig-release" = .{
+            .url = "https://github.com/topaihub/zig-release/archive/b4aaef15780d5c317b63f4fcff920c02190c836d.tar.gz",
+            .hash = "zig_release-0.1.0-nnPfHfQ5AACmR5zqN55Wikfu32Z0xGuVAySWNJtpQVeF",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

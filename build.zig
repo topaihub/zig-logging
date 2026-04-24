@@ -39,4 +39,8 @@ pub fn build(b: *std.Build) void {
     const run_example = b.addRunArtifact(example);
     run_example.step.dependOn(&install_example.step);
     b.step("run-example", "Run basic example").dependOn(&run_example.step);
+
+    const release_dep = b.dependency("zig-release", .{});
+    const zig_release = @import("zig-release");
+    zig_release.addReleaseStep(b, release_dep, .{});
 }
