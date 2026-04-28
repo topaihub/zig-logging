@@ -30,6 +30,23 @@ pub fn main() !void {
 2026-04-23T03:43:58.690Z  INFO app: started version="1.0.0"
 ```
 
+## 运行时级别
+
+```zig
+var managed = try logging.create(allocator, .{
+    .level = .info, // 初始运行时最低级别
+    .console = .{
+        .style = .pretty,
+        .stream_routing = .stderr,
+    },
+});
+defer managed.deinit();
+
+managed.logger.setMinLevel(.debug);
+```
+
+把 CLI 参数或 `DEBUG=1` 先转换成 `LogLevel`，再传给 `create()`。日志库本身不解析环境变量。
+
 ## 配置方式
 
 `logging.create()` 一行搞定。所有选项都有默认值，按需开启。
@@ -39,10 +56,16 @@ pub fn main() !void {
 ```zig
 var managed = try logging.create(allocator, .{
     .level = .debug,
-    .console = .{ .style = .pretty },  // pretty / compact / json
+    .console = .{
+        .style = .pretty,        // pretty / compact / json
+        .color_mode = .auto,     // auto / always / never
+    },
 });
 defer managed.deinit();
 ```
+
+`auto` 只在终端上启用 ANSI 颜色。需要强制上色用 `always`，保持纯文本用 `never`。
+`stream_routing` 默认是 `.split`；如果 stdout 要给管道数据用，可以改成 `.stderr`。
 
 ### trace 格式控制台
 
@@ -51,7 +74,7 @@ defer managed.deinit();
 ```zig
 var managed = try logging.create(allocator, .{
     .level = .debug,
-    .trace_console = .{},
+    .trace_console = .{ .color_mode = .always },
 });
 defer managed.deinit();
 ```
@@ -62,6 +85,8 @@ defer managed.deinit();
 [03:33:24 INF] TraceId:05b287fe|Request started|Method:CHAT|Path:/chat
 [03:33:24 ERR] TraceId:05b287fe|ERROR|method:AgentLoop.Run|Status:FAIL|Duration:2482
 ```
+
+trace 控制台默认只给级别 token 上色，其它部分保持纯文本。
 
 ### 按日滚动文件
 
@@ -135,7 +160,7 @@ defer managed.deinit();
 
 ### 零配置
 
-不传任何选项，默认控制台 pretty 格式：
+不传任何选项，默认控制台 pretty 格式，`color_mode = .auto`。
 
 ```zig
 var managed = try logging.create(allocator, .{});
@@ -146,11 +171,15 @@ defer managed.deinit();
 
 ```zig
 logging.create(allocator, .{
-    .level = .info,              // 全局最低级别：trace/debug/info/warn/error/fatal
+    .level = .info,              // 初始运行时最低级别：trace/debug/info/warn/error/fatal
     .console = .{                // 控制台输出（可选）
         .style = .pretty,        //   pretty / compact / json
+        .color_mode = .auto,     //   auto / always / never
+        .stream_routing = .split, //   split / stdout / stderr
     },
-    .trace_console = .{},        // trace 格式控制台（可选，和 console 二选一）
+    .trace_console = .{          // trace 格式控制台（可选，和 console 二选一）
+        .color_mode = .auto,     //   auto / always / never
+    },
     .file = .{                   // JSON Lines 文件（可选）
         .path = "app.jsonl",
         .max_bytes = null,        //   null = 不限大小

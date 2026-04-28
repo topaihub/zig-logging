@@ -15,12 +15,25 @@ pub const ConsoleStyle = enum {
     json,
 };
 
+pub const ConsoleColorMode = enum {
+    auto,
+    always,
+    never,
+};
+
+pub const ConsoleStreamRouting = enum {
+    split,
+    stdout,
+    stderr,
+};
+
 pub const EmitFn = *const fn (ctx: *anyopaque, to_stderr: bool, bytes: []const u8) anyerror!void;
 
 pub const ConsoleSink = struct {
     min_level: LogLevel = .info,
     style: ConsoleStyle = .pretty,
-    stderr_for_warn_and_error: bool = true,
+    color_mode: ConsoleColorMode = .auto,
+    stream_routing: ConsoleStreamRouting = .split,
     degraded: bool = false,
     dropped_records: usize = 0,
     emitter_ctx: ?*anyopaque = null,
@@ -40,6 +53,15 @@ pub const ConsoleSink = struct {
         return .{
             .min_level = min_level,
             .style = style,
+            .color_mode = .auto,
+        };
+    }
+
+    pub fn initWithColorMode(min_level: LogLevel, style: ConsoleStyle, color_mode: ConsoleColorMode) Self {
+        return .{
+            .min_level = min_level,
+            .style = style,
+            .color_mode = color_mode,
         };
     }
 
@@ -69,25 +91,32 @@ pub const ConsoleSink = struct {
             return;
         }
 
+        const to_stderr = switch (self.stream_routing) {
+            .split => @intFromEnum(record.level) >= @intFromEnum(LogLevel.warn),
+            .stdout => false,
+            .stderr => true,
+        };
+
+        var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+
         var rendered: std.ArrayListUnmanaged(u8) = .empty;
         defer rendered.deinit(std.heap.page_allocator);
 
-        self.renderRecord(record, &rendered) catch {
+        self.renderRecord(record, &rendered, io, to_stderr) catch {
             self.degraded = true;
             self.dropped_records += 1;
             return;
         };
 
-        const to_stderr = self.stderr_for_warn_and_error and
-            (@intFromEnum(record.level) >= @intFromEnum(LogLevel.warn));
-
-        self.emit(to_stderr, rendered.items) catch {
+        self.emit(io, to_stderr, rendered.items) catch {
             self.degraded = true;
             self.dropped_records += 1;
         };
     }
 
-    fn renderRecord(self: *Self, record: *const LogRecord, buffer: *std.ArrayListUnmanaged(u8)) !void {
+    fn renderRecord(self: *Self, record: *const LogRecord, buffer: *std.ArrayListUnmanaged(u8), io: std.Io, to_stderr: bool) !void {
         var temp = std.array_list.Managed(u8).init(std.heap.page_allocator);
         errdefer temp.deinit();
         // 预分配足够的容量（4KB 应该足够大多数日志消息）
@@ -100,14 +129,21 @@ pub const ConsoleSink = struct {
                 try record.writeJson(&writer);
             },
             .compact => {
-                try writer.print("[{s}] {s}: {s}", .{ record.level.asText(), record.subsystem, record.message });
+                const use_ansi = self.shouldUseAnsi(io, to_stderr);
+                try writer.writeByte('[');
+                try writeCompactLevel(&writer, record.level, use_ansi);
+                try writer.writeAll("] ");
+                try writer.print("{s}: {s}", .{ record.subsystem, record.message });
                 try appendContext(&writer, record);
                 try appendFieldPairs(&writer, record.fields);
             },
             .pretty => {
+                const use_ansi = self.shouldUseAnsi(io, to_stderr);
                 const ts = try formatPrettyTimestamp(std.heap.page_allocator, record.ts_unix_ms);
                 defer std.heap.page_allocator.free(ts);
-                try writer.print("{s} {s: >5} ", .{ ts, prettyLevelText(record.level) });
+                try writer.print("{s} ", .{ts});
+                try writePrettyLevel(&writer, record.level, use_ansi);
+                try writer.writeByte(' ');
                 if (!try renderPrettyTyped(&writer, record) and !try renderPrettyRequestSpan(&writer, record) and !try renderPrettyMethodTrace(&writer, record) and !try renderPrettyStepSpan(&writer, record)) {
                     try writer.print("{s}: {s}", .{ record.subsystem, record.message });
                     try appendContext(&writer, record);
@@ -125,17 +161,12 @@ pub const ConsoleSink = struct {
         };
     }
 
-    fn emit(self: *Self, to_stderr: bool, bytes: []const u8) !void {
+    fn emit(self: *Self, io: std.Io, to_stderr: bool, bytes: []const u8) !void {
         if (self.emitter_fn) |emit_fn| {
             return emit_fn(self.emitter_ctx.?, to_stderr, bytes);
         }
 
-        // 使用 Threaded Io 的默认实例
         var local_buffer: [4096]u8 = undefined;
-        var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
-        defer threaded.deinit();
-        const io = threaded.io();
-
         if (to_stderr) {
             var stderr_file = std.Io.File.stderr();
             var stderr_writer = stderr_file.writer(io, &local_buffer);
@@ -147,6 +178,14 @@ pub const ConsoleSink = struct {
             try stdout_writer.interface.writeAll(bytes);
             try stdout_writer.interface.flush();
         }
+    }
+
+    fn shouldUseAnsi(self: *Self, io: std.Io, to_stderr: bool) bool {
+        const is_terminal = if (to_stderr)
+            std.Io.File.stderr().isTty(io) catch false
+        else
+            std.Io.File.stdout().isTty(io) catch false;
+        return ansiEnabledForMode(self.color_mode, is_terminal);
     }
 
     fn writeErased(ptr: *anyopaque, record: *const LogRecord) void {
@@ -268,6 +307,36 @@ fn prettyLevelText(level: LogLevel) []const u8 {
     };
 }
 
+fn ansiEnabledForMode(mode: ConsoleColorMode, is_terminal: bool) bool {
+    return switch (mode) {
+        .auto => is_terminal,
+        .always => true,
+        .never => false,
+    };
+}
+
+fn ansiLevelStart(level: LogLevel) []const u8 {
+    return switch (level) {
+        .trace, .silent => "\x1b[90m",
+        .debug => "\x1b[34m",
+        .info => "\x1b[32m",
+        .warn => "\x1b[33m",
+        .@"error", .fatal => "\x1b[31m",
+    };
+}
+
+fn writePrettyLevel(writer: *std.Io.Writer, level: LogLevel, use_ansi: bool) !void {
+    if (use_ansi) try writer.writeAll(ansiLevelStart(level));
+    try writer.print("{s: >5}", .{prettyLevelText(level)});
+    if (use_ansi) try writer.writeAll("\x1b[0m");
+}
+
+fn writeCompactLevel(writer: *std.Io.Writer, level: LogLevel, use_ansi: bool) !void {
+    if (use_ansi) try writer.writeAll(ansiLevelStart(level));
+    try writer.writeAll(level.asText());
+    if (use_ansi) try writer.writeAll("\x1b[0m");
+}
+
 fn formatPrettyTimestamp(allocator: std.mem.Allocator, ts_unix_ms: i64) ![]u8 {
     const seconds = @divFloor(ts_unix_ms, 1000);
     const millis = @mod(ts_unix_ms, 1000);
@@ -385,7 +454,7 @@ fn appendFieldValue(writer: anytype, value: LogFieldValue) !void {
     }
 }
 
-test "console sink renders json and routes errors to stderr" {
+test "console sink split routing keeps stdout and stderr separated" {
     const Capture = struct {
         allocator: std.mem.Allocator,
         stdout: std.ArrayListUnmanaged(u8) = .empty,
@@ -409,20 +478,110 @@ test "console sink renders json and routes errors to stderr" {
     var capture = Capture{ .allocator = std.testing.allocator };
     defer capture.deinit();
 
-    var sink = ConsoleSink.init(.trace, .json);
+    var sink = ConsoleSink.initWithColorMode(.trace, .json, .always);
     sink.setEmitter(&capture, Capture.emit);
 
-    const record = LogRecord{
+    const info_record = LogRecord{
         .ts_unix_ms = 10,
+        .level = .info,
+        .subsystem = "runtime/dispatch",
+        .message = "command started",
+    };
+    const error_record = LogRecord{
+        .ts_unix_ms = 11,
         .level = .@"error",
         .subsystem = "runtime/dispatch",
         .message = "command failed",
         .trace_id = "trc_01",
     };
+    sink.write(&info_record);
+    sink.write(&error_record);
+
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout.items, "\"level\":\"info\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr.items, "\"level\":\"error\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout.items, "\x1b[") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr.items, "\x1b[") == null);
+}
+
+test "console sink routes json output to stdout when requested" {
+    const Capture = struct {
+        allocator: std.mem.Allocator,
+        stdout: std.ArrayListUnmanaged(u8) = .empty,
+        stderr: std.ArrayListUnmanaged(u8) = .empty,
+
+        fn deinit(self: *@This()) void {
+            self.stdout.deinit(self.allocator);
+            self.stderr.deinit(self.allocator);
+        }
+
+        fn emit(ptr: *anyopaque, to_stderr: bool, bytes: []const u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (to_stderr) {
+                try self.stderr.appendSlice(self.allocator, bytes);
+            } else {
+                try self.stdout.appendSlice(self.allocator, bytes);
+            }
+        }
+    };
+
+    var capture = Capture{ .allocator = std.testing.allocator };
+    defer capture.deinit();
+
+    var sink = ConsoleSink.initWithColorMode(.trace, .json, .always);
+    sink.stream_routing = .stdout;
+    sink.setEmitter(&capture, Capture.emit);
+
+    const record = LogRecord{
+        .ts_unix_ms = 12,
+        .level = .warn,
+        .subsystem = "runtime/dispatch",
+        .message = "command started",
+    };
+    sink.write(&record);
+
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout.items, "\"level\":\"warn\"") != null);
+    try std.testing.expectEqual(@as(usize, 0), capture.stderr.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout.items, "\x1b[") == null);
+}
+
+test "console sink routes pretty output to stderr when requested" {
+    const Capture = struct {
+        allocator: std.mem.Allocator,
+        stdout: std.ArrayListUnmanaged(u8) = .empty,
+        stderr: std.ArrayListUnmanaged(u8) = .empty,
+
+        fn deinit(self: *@This()) void {
+            self.stdout.deinit(self.allocator);
+            self.stderr.deinit(self.allocator);
+        }
+
+        fn emit(ptr: *anyopaque, to_stderr: bool, bytes: []const u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (to_stderr) {
+                try self.stderr.appendSlice(self.allocator, bytes);
+            } else {
+                try self.stdout.appendSlice(self.allocator, bytes);
+            }
+        }
+    };
+
+    var capture = Capture{ .allocator = std.testing.allocator };
+    defer capture.deinit();
+
+    var sink = ConsoleSink.initWithColorMode(.trace, .pretty, .never);
+    sink.stream_routing = .stderr;
+    sink.setEmitter(&capture, Capture.emit);
+
+    const record = LogRecord{
+        .ts_unix_ms = 13,
+        .level = .info,
+        .subsystem = "runtime/dispatch",
+        .message = "stderr only",
+    };
     sink.write(&record);
 
     try std.testing.expectEqual(@as(usize, 0), capture.stdout.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, capture.stderr.items, "\"level\":\"error\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr.items, "INFO runtime/dispatch: stderr only") != null);
 }
 
 test "console sink pretty and compact output differ" {
@@ -450,19 +609,74 @@ test "console sink pretty and compact output differ" {
 
     var pretty_capture = Capture{ .allocator = std.testing.allocator };
     defer pretty_capture.deinit();
-    var pretty_sink = ConsoleSink.init(.trace, .pretty);
+    var pretty_sink = ConsoleSink.initWithColorMode(.trace, .pretty, .never);
     pretty_sink.setEmitter(&pretty_capture, Capture.emit);
     pretty_sink.write(&record);
 
     var compact_capture = Capture{ .allocator = std.testing.allocator };
     defer compact_capture.deinit();
-    var compact_sink = ConsoleSink.init(.trace, .compact);
+    var compact_sink = ConsoleSink.initWithColorMode(.trace, .compact, .never);
     compact_sink.setEmitter(&compact_capture, Capture.emit);
     compact_sink.write(&record);
 
     try std.testing.expect(std.mem.indexOf(u8, pretty_capture.stdout.items, "INFO config: field updated") != null);
     try std.testing.expect(std.mem.indexOf(u8, pretty_capture.stdout.items, "1970-01-01T00:00:00.022Z") != null);
     try std.testing.expect(std.mem.indexOf(u8, compact_capture.stdout.items, "[info] config: field updated") != null);
+    try std.testing.expect(std.mem.indexOf(u8, pretty_capture.stdout.items, "\x1b[") == null);
+    try std.testing.expect(std.mem.indexOf(u8, compact_capture.stdout.items, "\x1b[") == null);
+}
+
+test "console sink colors level tokens in always mode" {
+    const Capture = struct {
+        allocator: std.mem.Allocator,
+        stdout: std.ArrayListUnmanaged(u8) = .empty,
+
+        fn deinit(self: *@This()) void {
+            self.stdout.deinit(self.allocator);
+        }
+
+        fn emit(ptr: *anyopaque, _: bool, bytes: []const u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            try self.stdout.appendSlice(self.allocator, bytes);
+        }
+    };
+
+    const pretty_record = LogRecord{
+        .ts_unix_ms = 22,
+        .level = .warn,
+        .subsystem = "config",
+        .message = "field updated",
+    };
+
+    var pretty_capture = Capture{ .allocator = std.testing.allocator };
+    defer pretty_capture.deinit();
+    var pretty_sink = ConsoleSink.initWithColorMode(.trace, .pretty, .always);
+    pretty_sink.setEmitter(&pretty_capture, Capture.emit);
+    pretty_sink.write(&pretty_record);
+
+    try std.testing.expect(std.mem.indexOf(u8, pretty_capture.stdout.items, "\x1b[33m WARN\x1b[0m") != null);
+
+    const compact_record = LogRecord{
+        .ts_unix_ms = 22,
+        .level = .info,
+        .subsystem = "config",
+        .message = "field updated",
+    };
+
+    var compact_capture = Capture{ .allocator = std.testing.allocator };
+    defer compact_capture.deinit();
+    var compact_sink = ConsoleSink.initWithColorMode(.trace, .compact, .always);
+    compact_sink.setEmitter(&compact_capture, Capture.emit);
+    compact_sink.write(&compact_record);
+
+    try std.testing.expect(std.mem.indexOf(u8, compact_capture.stdout.items, "[\x1b[32minfo\x1b[0m] config: field updated") != null);
+}
+
+test "console color mode auto follows terminal state" {
+    try std.testing.expect(ansiEnabledForMode(.always, false));
+    try std.testing.expect(!ansiEnabledForMode(.never, true));
+    try std.testing.expect(ansiEnabledForMode(.auto, true));
+    try std.testing.expect(!ansiEnabledForMode(.auto, false));
 }
 
 test "console sink pretty renders request span style" {
@@ -499,7 +713,7 @@ test "console sink pretty renders request span style" {
 
     var capture = Capture{ .allocator = std.testing.allocator };
     defer capture.deinit();
-    var sink = ConsoleSink.init(.trace, .pretty);
+    var sink = ConsoleSink.initWithColorMode(.trace, .pretty, .never);
     sink.setEmitter(&capture, Capture.emit);
     sink.write(&record);
 
@@ -540,7 +754,7 @@ test "console sink pretty renders step trace style" {
 
     var capture = Capture{ .allocator = std.testing.allocator };
     defer capture.deinit();
-    var sink = ConsoleSink.init(.trace, .pretty);
+    var sink = ConsoleSink.initWithColorMode(.trace, .pretty, .never);
     sink.setEmitter(&capture, Capture.emit);
     sink.write(&record);
 
@@ -583,7 +797,7 @@ test "console sink pretty renders method trace style" {
 
     var capture = Capture{ .allocator = std.testing.allocator };
     defer capture.deinit();
-    var sink = ConsoleSink.init(.trace, .pretty);
+    var sink = ConsoleSink.initWithColorMode(.trace, .pretty, .never);
     sink.setEmitter(&capture, Capture.emit);
     sink.write(&record);
 
@@ -624,7 +838,7 @@ test "console sink supports concurrent writes without degrading" {
 
     var capture = Capture{ .allocator = std.testing.allocator };
     defer capture.deinit();
-    var sink = ConsoleSink.init(.trace, .compact);
+    var sink = ConsoleSink.initWithColorMode(.trace, .compact, .never);
     sink.setEmitter(&capture, Capture.emit);
 
     const threads = [_]std.Thread{

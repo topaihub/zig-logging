@@ -29,6 +29,8 @@ pub const sinks = struct {
 
 // ── Sink 配置类型 ──
 pub const ConsoleStyle = @import("sinks/console.zig").ConsoleStyle;
+pub const ConsoleColorMode = @import("sinks/console.zig").ConsoleColorMode;
+pub const ConsoleStreamRouting = @import("sinks/console.zig").ConsoleStreamRouting;
 pub const RotatingFileSinkConfig = @import("sinks/rotating_file.zig").RotatingFileSinkConfig;
 pub const LogFormat = @import("sinks/rotating_file.zig").LogFormat;
 pub const TraceTextFileSinkOptions = @import("sinks/trace/text_file.zig").TraceTextFileSinkOptions;
@@ -46,5 +48,6 @@ test {
 test "logging module exports are available" {
     try std.testing.expectEqualStrings("info", LogLevel.info.asText());
     try std.testing.expect(ConsoleStyle.pretty == .pretty);
+    try std.testing.expect(ConsoleColorMode.auto == .auto);
     try std.testing.expect(RedactMode.safe == .safe);
 }

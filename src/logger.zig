@@ -40,7 +40,7 @@ pub const LoggerOptions = struct {
 
 pub const Logger = struct {
     sink: LogSink,
-    min_level: LogLevel = .info,
+    min_level: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(LogLevel.info)),
     redact_mode: RedactMode = .safe,
     trace_context_provider: ?TraceContextProvider = null,
     truncated_subsystem_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
@@ -56,7 +56,7 @@ pub const Logger = struct {
     pub fn initWithOptions(sink: LogSink, options: LoggerOptions) Self {
         return .{
             .sink = sink,
-            .min_level = options.min_level,
+            .min_level = std.atomic.Value(u8).init(@intFromEnum(options.min_level)),
             .redact_mode = options.redact_mode,
             .trace_context_provider = options.trace_context_provider,
         };
@@ -68,6 +68,14 @@ pub const Logger = struct {
 
     pub fn flush(self: *Self) void {
         self.sink.flush();
+    }
+
+    pub fn minLevel(self: *const Self) LogLevel {
+        return @enumFromInt(self.min_level.load(.monotonic));
+    }
+
+    pub fn setMinLevel(self: *Self, level: LogLevel) void {
+        self.min_level.store(@intFromEnum(level), .monotonic);
     }
 
     pub fn child(self: *Self, subsystem_name: []const u8) SubsystemLogger {
@@ -87,7 +95,7 @@ pub const Logger = struct {
     }
 
     fn log(self: *Self, level: LogLevel, kind: LogRecordKind, subsystem_name: []const u8, message: []const u8, fields: []const LogField) void {
-        if (!self.min_level.allows(level)) {
+        if (!self.minLevel().allows(level)) {
             return;
         }
 
@@ -319,6 +327,32 @@ test "logger respects minimum level filtering" {
     try std.testing.expectEqual(@as(usize, 1), memory_sink.count());
     try std.testing.expect(memory_sink.latest().?.level == .@"error");
     try std.testing.expectEqualStrings("persist failed", memory_sink.latest().?.message);
+}
+
+test "logger applies runtime minimum level updates to subsequent emissions" {
+    const memory_sink_model = @import("sinks/memory.zig");
+
+    var memory_sink = memory_sink_model.MemorySink.init(std.testing.allocator, 8);
+    defer memory_sink.deinit();
+
+    var logger = Logger.init(memory_sink.asLogSink(), .info);
+    defer logger.deinit();
+
+    const subsystem_logger = logger.child("config");
+    subsystem_logger.debug("ignored before lowering", &.{});
+
+    logger.setMinLevel(.debug);
+    subsystem_logger.debug("emitted after lowering", &.{});
+
+    logger.setMinLevel(.warn);
+    subsystem_logger.info("ignored after raising", &.{});
+    subsystem_logger.@"error"("emitted after raising", &.{});
+
+    try std.testing.expectEqual(@as(usize, 2), memory_sink.count());
+    try std.testing.expectEqualStrings("emitted after lowering", memory_sink.recordAt(0).?.message);
+    try std.testing.expect(memory_sink.recordAt(0).?.level == .debug);
+    try std.testing.expectEqualStrings("emitted after raising", memory_sink.latest().?.message);
+    try std.testing.expect(memory_sink.latest().?.level == .@"error");
 }
 
 test "logger redacts sensitive fields before sink write" {

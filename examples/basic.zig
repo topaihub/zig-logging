@@ -2,9 +2,9 @@ const std = @import("std");
 const logging = @import("zig-logging");
 
 pub fn main() !void {
-    // 创建控制台 sink
-    var console = logging.sinks.Console.init(.debug, .pretty);
-    
+    // 强制彩色输出，直接运行就能看到 ANSI 效果
+    var console = logging.sinks.Console.initWithColorMode(.debug, .pretty, .always);
+
     // 创建 logger
     var logger = logging.Logger.init(console.asLogSink(), .debug);
     defer logger.deinit();
@@ -38,4 +38,23 @@ pub fn main() !void {
     });
 
     root.info("Application stopped", &.{});
+
+    // trace 格式彩色输出
+    {
+        std.debug.print("\n=== trace format with colors ===\n", .{});
+        var trace_console = logging.sinks.TraceConsole.initWithColorMode(.debug, .always);
+        var trace_logger = logging.Logger.init(trace_console.asLogSink(), .debug);
+        defer trace_logger.deinit();
+
+        const trace_root = trace_logger.child("request");
+        trace_root.logKind(.info, .request, "Request started", &.{
+            logging.LogField.string("Method", "CHAT"),
+            logging.LogField.string("Path", "/chat"),
+        });
+        trace_root.logKind(.@"error", .method, "ERROR", &.{
+            logging.LogField.string("method", "AgentLoop.Run"),
+            logging.LogField.string("Status", "FAIL"),
+            logging.LogField.uint("Duration", 2482),
+        });
+    }
 }

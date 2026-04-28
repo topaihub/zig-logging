@@ -30,6 +30,23 @@ Output:
 2026-04-23T03:43:58.690Z  INFO app: started version="1.0.0"
 ```
 
+## Runtime Level
+
+```zig
+var managed = try logging.create(allocator, .{
+    .level = .info, // initial runtime minimum level
+    .console = .{
+        .style = .pretty,
+        .stream_routing = .stderr,
+    },
+});
+defer managed.deinit();
+
+managed.logger.setMinLevel(.debug);
+```
+
+Map CLI flags or `DEBUG=1` to a `LogLevel` in the caller and pass that value into `create()`. The library does not parse env vars itself.
+
 ## Configuration
 
 `logging.create()` does it all in one line. All options have defaults — enable only what you need.
@@ -39,10 +56,16 @@ Output:
 ```zig
 var managed = try logging.create(allocator, .{
     .level = .debug,
-    .console = .{ .style = .pretty },  // pretty / compact / json
+    .console = .{
+        .style = .pretty,        // pretty / compact / json
+        .color_mode = .auto,     // auto / always / never
+    },
 });
 defer managed.deinit();
 ```
+
+`auto` only enables ANSI colors on terminals. Use `always` to force color or `never` to keep plain text.
+`stream_routing` defaults to `.split`; use `.stderr` when stdout must stay clean for piped data.
 
 ### Trace Format Console
 
@@ -51,7 +74,7 @@ Outputs `[HH:MM:SS LVL] TraceId:xxx|Message|Field:value` format:
 ```zig
 var managed = try logging.create(allocator, .{
     .level = .debug,
-    .trace_console = .{},
+    .trace_console = .{ .color_mode = .always },
 });
 defer managed.deinit();
 ```
@@ -62,6 +85,8 @@ Output:
 [03:33:24 INF] TraceId:05b287fe|Request started|Method:CHAT|Path:/chat
 [03:33:24 ERR] TraceId:05b287fe|ERROR|method:AgentLoop.Run|Status:FAIL|Duration:2482
 ```
+
+The trace console colors the level token by default policy and keeps the rest of the trace text plain.
 
 ### Daily Rotating File
 
@@ -135,7 +160,7 @@ defer managed.deinit();
 
 ### Zero Configuration
 
-No options needed — defaults to console pretty format:
+No options needed. Defaults to console pretty format with `color_mode = .auto`.
 
 ```zig
 var managed = try logging.create(allocator, .{});
@@ -146,11 +171,15 @@ defer managed.deinit();
 
 ```zig
 logging.create(allocator, .{
-    .level = .info,              // Global minimum level: trace/debug/info/warn/error/fatal
+    .level = .info,              // Initial runtime minimum level: trace/debug/info/warn/error/fatal
     .console = .{                // Console output (optional)
         .style = .pretty,        //   pretty / compact / json
+        .color_mode = .auto,     //   auto / always / never
+        .stream_routing = .split, //   split / stdout / stderr
     },
-    .trace_console = .{},        // Trace format console (optional, mutually exclusive with console)
+    .trace_console = .{          // Trace format console (optional, mutually exclusive with console)
+        .color_mode = .auto,     //   auto / always / never
+    },
     .file = .{                   // JSON Lines file (optional)
         .path = "app.jsonl",
         .max_bytes = null,        //   null = unlimited size

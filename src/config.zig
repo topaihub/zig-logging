@@ -43,8 +43,12 @@ pub const LogConfig = struct {
 
     pub const ConsoleConfig = struct {
         style: sink_impls.console.ConsoleStyle = .pretty,
+        color_mode: sink_impls.console.ConsoleColorMode = .auto,
+        stream_routing: sink_impls.console.ConsoleStreamRouting = .split,
     };
-    pub const TraceConsoleConfig = struct {};
+    pub const TraceConsoleConfig = struct {
+        color_mode: sink_impls.console.ConsoleColorMode = .auto,
+    };
     pub const FileConfig = struct {
         path: []const u8,
         max_bytes: ?u64 = null,
@@ -101,7 +105,10 @@ pub const ManagedLogger = struct {
 /// ```zig
 /// var managed = try logging.create(allocator, .{
 ///     .level = .debug,
-///     .console = .{ .style = .pretty },
+///     .console = .{
+///         .style = .pretty,
+///         .color_mode = .auto,
+///     },
 ///     .rotating = .{ .log_dir = "logs", .prefix = "myapp" },
 /// });
 /// defer managed.deinit();
@@ -120,7 +127,9 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     // 控制台
     if (config.console) |c| {
         const s = try allocator.create(sink_impls.console.ConsoleSink);
-        s.* = sink_impls.console.ConsoleSink.init(config.level, c.style);
+        s.* = sink_impls.console.ConsoleSink.initWithColorMode(config.level, c.style, c.color_mode);
+        s.min_level = .trace;
+        s.stream_routing = c.stream_routing;
         managed.console_sink = s;
         sink_buf[sink_count] = s.asLogSink();
         sink_count += 1;
@@ -129,7 +138,8 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     // trace 控制台
     if (config.trace_console != null) {
         const s = try allocator.create(sink_impls.trace_console.TraceConsoleSink);
-        s.* = sink_impls.trace_console.TraceConsoleSink.init(config.level);
+        s.* = sink_impls.trace_console.TraceConsoleSink.initWithColorMode(config.level, config.trace_console.?.color_mode);
+        s.min_level = .trace;
         managed.trace_console_sink = s;
         sink_buf[sink_count] = s.asLogSink();
         sink_count += 1;
@@ -172,7 +182,8 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     const final_sink: LogSink = if (sink_count == 0) blk: {
         // 默认控制台
         const s = try allocator.create(sink_impls.console.ConsoleSink);
-        s.* = sink_impls.console.ConsoleSink.init(config.level, .pretty);
+        s.* = sink_impls.console.ConsoleSink.initWithColorMode(config.level, .pretty, .auto);
+        s.min_level = .trace;
         managed.console_sink = s;
         break :blk s.asLogSink();
     } else if (sink_count == 1) sink_buf[0] else blk: {
@@ -189,4 +200,98 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     });
 
     return managed;
+}
+
+test "create threads console color mode" {
+    var managed = try create(std.testing.allocator, .{
+        .console = .{
+            .style = .compact,
+            .color_mode = .always,
+            .stream_routing = .stderr,
+        },
+        .level = .debug,
+    });
+    defer managed.deinit();
+
+    try std.testing.expect(managed.console_sink != null);
+    try std.testing.expectEqual(sink_impls.console.ConsoleColorMode.always, managed.console_sink.?.color_mode);
+    try std.testing.expectEqual(sink_impls.console.ConsoleStyle.compact, managed.console_sink.?.style);
+    try std.testing.expectEqual(sink_impls.console.ConsoleStreamRouting.stderr, managed.console_sink.?.stream_routing);
+    try std.testing.expectEqual(LogLevel.debug, managed.logger.minLevel());
+}
+
+test "create defaults console color mode to auto" {
+    var managed = try create(std.testing.allocator, .{});
+    defer managed.deinit();
+
+    try std.testing.expect(managed.console_sink != null);
+    try std.testing.expectEqual(sink_impls.console.ConsoleColorMode.auto, managed.console_sink.?.color_mode);
+    try std.testing.expectEqual(sink_impls.console.ConsoleStyle.pretty, managed.console_sink.?.style);
+    try std.testing.expectEqual(sink_impls.console.ConsoleStreamRouting.split, managed.console_sink.?.stream_routing);
+}
+
+test "create keeps trace console separate" {
+    var managed = try create(std.testing.allocator, .{
+        .trace_console = .{ .color_mode = .always },
+    });
+    defer managed.deinit();
+
+    try std.testing.expect(managed.trace_console_sink != null);
+    try std.testing.expect(managed.console_sink == null);
+    try std.testing.expectEqual(sink_impls.console.ConsoleColorMode.always, managed.trace_console_sink.?.color_mode);
+}
+
+test "create keeps file output unchanged across console routing" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const root_path = try tmp_dir.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root_path);
+
+    const stdout_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "stdout.jsonl" });
+    defer std.testing.allocator.free(stdout_path);
+
+    const stderr_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "stderr.jsonl" });
+    defer std.testing.allocator.free(stderr_path);
+
+    var stdout_managed = try create(std.testing.allocator, .{
+        .level = .info,
+        .console = .{
+            .stream_routing = .stdout,
+        },
+        .file = .{
+            .path = stdout_path,
+        },
+    });
+    defer stdout_managed.deinit();
+
+    var stderr_managed = try create(std.testing.allocator, .{
+        .level = .info,
+        .console = .{
+            .stream_routing = .stderr,
+        },
+        .file = .{
+            .path = stderr_path,
+        },
+    });
+    defer stderr_managed.deinit();
+
+    const record = core.record.LogRecord{
+        .ts_unix_ms = 42,
+        .level = .info,
+        .subsystem = "config",
+        .message = "updated",
+        .fields = &.{core.record.LogField.string("path", "gateway.port")},
+    };
+
+    stdout_managed.file_sink.?.write(&record);
+    stderr_managed.file_sink.?.write(&record);
+
+    const stdout_bytes = try tmp_dir.dir.readFileAlloc(std.testing.io, "stdout.jsonl", std.testing.allocator, std.Io.Limit.limited(4096));
+    defer std.testing.allocator.free(stdout_bytes);
+    const stderr_bytes = try tmp_dir.dir.readFileAlloc(std.testing.io, "stderr.jsonl", std.testing.allocator, std.Io.Limit.limited(4096));
+    defer std.testing.allocator.free(stderr_bytes);
+
+    try std.testing.expectEqualStrings(stdout_bytes, stderr_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, stdout_bytes, "\"subsystem\":\"config\"") != null);
 }

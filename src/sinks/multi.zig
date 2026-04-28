@@ -81,7 +81,7 @@ test "multi sink fans out and isolates degraded sink" {
     var memory_sink = memory_sink_model.MemorySink.init(std.testing.allocator, 4);
     defer memory_sink.deinit();
 
-    var console_sink = console_sink_model.ConsoleSink.init(.trace, .compact);
+    var console_sink = console_sink_model.ConsoleSink.initWithColorMode(.trace, .compact, .never);
     console_sink.setEmitter(@ptrFromInt(1), FailingEmitter.emit);
 
     var multi_sink = try MultiSink.init(std.testing.allocator, &.{

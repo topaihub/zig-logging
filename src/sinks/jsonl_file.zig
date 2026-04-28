@@ -83,17 +83,17 @@ pub const JsonlFileSink = struct {
     pub fn flush(_: *Self) void {}
 
     fn writeInternal(self: *Self, record: *const LogRecord) !void {
-        var temp = std.array_list.Managed(u8).init(self.allocator);
-        errdefer temp.deinit();
-        var unmanaged = temp.moveToUnmanaged();
-        var writer = std.Io.Writer.fromArrayList(&unmanaged);
-        try record.writeJson(&writer);
-        try unmanaged.append(self.allocator, '\n');
+        var allocating_writer = std.Io.Writer.Allocating.init(self.allocator);
+        defer allocating_writer.deinit();
+        const writer = &allocating_writer.writer;
+        try record.writeJson(writer);
+        try writer.writeByte('\n');
+        var output = allocating_writer.toArrayList();
+        defer output.deinit(self.allocator);
 
         if (self.max_bytes) |max_bytes| {
-            if (self.current_bytes + unmanaged.items.len > max_bytes) {
+            if (self.current_bytes + output.items.len > max_bytes) {
                 self.dropped_records += 1;
-                unmanaged.deinit(self.allocator);
                 return;
             }
         }
@@ -107,9 +107,9 @@ pub const JsonlFileSink = struct {
         const io_write = std.Io.Threaded.global_single_threaded.*.io();
         defer file.close(io_write);
 
-        try file.writeStreamingAll(io_write, unmanaged.items);
-        self.current_bytes += unmanaged.items.len;
-        unmanaged.deinit(self.allocator);
+        const file_size = try file.length(io_write);
+        try file.writePositionalAll(io_write, output.items, file_size);
+        self.current_bytes += output.items.len;
     }
 
     fn writeErased(ptr: *anyopaque, record: *const LogRecord) void {

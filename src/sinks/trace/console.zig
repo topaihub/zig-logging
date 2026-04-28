@@ -2,15 +2,18 @@ const std = @import("std");
 const record_model = @import("../../core/record.zig");
 const sink_model = @import("../../core/sink.zig");
 const level_model = @import("../../core/level.zig");
+const console_model = @import("../console.zig");
 const trace_formatter = @import("formatter.zig");
 
 pub const LogRecord = record_model.LogRecord;
 pub const LogSink = sink_model.LogSink;
 pub const LogLevel = level_model.LogLevel;
+pub const ConsoleColorMode = console_model.ConsoleColorMode;
 
 /// TraceConsoleSink outputs logs to stdout in trace format: [HH:MM:SS LVL] TraceId:xxx|Message|Field:value
 pub const TraceConsoleSink = struct {
     min_level: LogLevel,
+    color_mode: ConsoleColorMode = .auto,
     mutex: std.atomic.Mutex = .unlocked,
 
     const Self = @This();
@@ -23,8 +26,13 @@ pub const TraceConsoleSink = struct {
     };
 
     pub fn init(min_level: LogLevel) Self {
+        return initWithColorMode(min_level, .auto);
+    }
+
+    pub fn initWithColorMode(min_level: LogLevel, color_mode: ConsoleColorMode) Self {
         return .{
             .min_level = min_level,
+            .color_mode = color_mode,
         };
     }
 
@@ -47,24 +55,30 @@ pub const TraceConsoleSink = struct {
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const allocator = fba.allocator();
 
-        var allocating_writer = std.Io.Writer.Allocating.init(allocator);
-        const writer = &allocating_writer.writer;
-
-        trace_formatter.formatRecord(writer, record) catch return;
-
-        const result = allocating_writer.toArrayList();
-
-        // 使用 Threaded Io 输出到 stdout
         var local_buffer: [4096]u8 = undefined;
         var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
         defer threaded.deinit();
         const io = threaded.io();
+
+        var allocating_writer = std.Io.Writer.Allocating.init(allocator);
+        const writer = &allocating_writer.writer;
+
+        const use_color = self.shouldUseAnsi(io);
+        trace_formatter.formatRecordWithOptions(writer, record, .{ .use_color = use_color }) catch return;
+
+        var result = allocating_writer.toArrayList();
+        defer result.deinit(allocator);
 
         var stdout_file = std.Io.File.stdout();
         var stdout_writer = stdout_file.writer(io, &local_buffer);
         stdout_writer.interface.writeAll(result.items) catch return;
         stdout_writer.interface.writeByte('\n') catch return;
         stdout_writer.interface.flush() catch return;
+    }
+
+    fn shouldUseAnsi(self: *Self, io: std.Io) bool {
+        const is_terminal = std.Io.File.stdout().isTty(io) catch false;
+        return ansiEnabledForMode(self.color_mode, is_terminal);
     }
 
     pub fn flush(_: *Self) void {}
@@ -88,3 +102,11 @@ pub const TraceConsoleSink = struct {
         return "trace_console";
     }
 };
+
+fn ansiEnabledForMode(mode: ConsoleColorMode, is_terminal: bool) bool {
+    return switch (mode) {
+        .auto => is_terminal,
+        .always => true,
+        .never => false,
+    };
+}

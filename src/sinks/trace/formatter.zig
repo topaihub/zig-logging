@@ -8,9 +8,21 @@ pub const LogFieldValue = record_model.LogFieldValue;
 pub const LogLevel = level_model.LogLevel;
 
 /// Format a log record in trace format: [HH:MM:SS LVL] TraceId:xxx|Message|Field:value
+pub const TraceFormatOptions = struct {
+    use_color: bool = false,
+};
+
 pub fn formatRecord(writer: anytype, record: *const LogRecord) !void {
+    try formatRecordWithOptions(writer, record, .{});
+}
+
+pub fn formatRecordWithOptions(writer: anytype, record: *const LogRecord, options: TraceFormatOptions) !void {
     const time_text = try formatTimeOfDay(record.ts_unix_ms);
-    try writer.print("[{s} {s}] ", .{ time_text, shortLevelText(record.level) });
+    try writer.writeByte('[');
+    try writer.writeAll(time_text[0..]);
+    try writer.writeByte(' ');
+    try writeShortLevel(writer, record.level, options.use_color);
+    try writer.writeAll("] ");
 
     if (try renderTyped(writer, record)) return;
     if (try renderSummaryTrace(writer, record)) return;
@@ -262,6 +274,22 @@ fn shortLevelText(level: LogLevel) []const u8 {
     };
 }
 
+fn writeShortLevel(writer: anytype, level: LogLevel, use_color: bool) !void {
+    if (use_color) try writer.writeAll(ansiLevelStart(level));
+    try writer.writeAll(shortLevelText(level));
+    if (use_color) try writer.writeAll("\x1b[0m");
+}
+
+fn ansiLevelStart(level: LogLevel) []const u8 {
+    return switch (level) {
+        .trace, .silent => "\x1b[90m",
+        .debug => "\x1b[34m",
+        .info => "\x1b[32m",
+        .warn => "\x1b[33m",
+        .@"error", .fatal => "\x1b[31m",
+    };
+}
+
 fn formatTimeOfDay(ts_unix_ms: i64) ![8]u8 {
     const seconds = @divFloor(ts_unix_ms, 1000);
     const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(seconds) };
@@ -274,4 +302,41 @@ fn formatTimeOfDay(ts_unix_ms: i64) ![8]u8 {
     var out: [8]u8 = undefined;
     _ = try std.fmt.bufPrint(&out, "{d:0>2}:{d:0>2}:{d:0>2}", .{ hour, minute, second });
     return out;
+}
+
+test "trace formatter colors level tokens in always mode" {
+    const record_debug = LogRecord{
+        .ts_unix_ms = 22,
+        .level = .debug,
+        .subsystem = "runtime",
+        .message = "debug",
+    };
+    const record_info = LogRecord{
+        .ts_unix_ms = 22,
+        .level = .info,
+        .subsystem = "runtime",
+        .message = "info",
+    };
+    const record_error = LogRecord{
+        .ts_unix_ms = 22,
+        .level = .@"error",
+        .subsystem = "runtime",
+        .message = "error",
+    };
+
+    var allocating_writer = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer allocating_writer.deinit();
+    const writer = &allocating_writer.writer;
+
+    try formatRecordWithOptions(writer, &record_debug, .{ .use_color = true });
+    try writer.writeByte('\n');
+    try formatRecordWithOptions(writer, &record_info, .{ .use_color = true });
+    try writer.writeByte('\n');
+    try formatRecordWithOptions(writer, &record_error, .{ .use_color = true });
+
+    var result = allocating_writer.toArrayList();
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, result.items, "\x1b[34mDBG\x1b[0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.items, "\x1b[32mINF\x1b[0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.items, "\x1b[31mERR\x1b[0m") != null);
 }
