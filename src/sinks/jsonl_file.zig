@@ -25,6 +25,7 @@ pub const JsonlFileSink = struct {
     degraded: bool = false,
     dropped_records: usize = 0,
     mutex: std.atomic.Mutex = .unlocked,
+    io: std.Io,
 
     const Self = @This();
 
@@ -40,6 +41,7 @@ pub const JsonlFileSink = struct {
             .allocator = allocator,
             .path = try allocator.dupe(u8, path),
             .max_bytes = max_bytes,
+            .io = io,
         };
 
         self.current_bytes = currentSize(self.path, io);
@@ -98,17 +100,16 @@ pub const JsonlFileSink = struct {
             }
         }
 
-        try ensureParentDirectory(self.path);
+        try ensureParentDirectory(self.path, self.io);
         // Future extension point:
         // before opening the append file, a rotation/retention policy can inspect
         // current_bytes, max_bytes, and on-disk file state to decide whether to
         // rotate the current file or prune old generations.
-        var file = try openAppendFile(self.path);
-        const io_write = std.Io.Threaded.global_single_threaded.*.io();
-        defer file.close(io_write);
+        var file = try openAppendFile(self.path, self.io);
+        defer file.close(self.io);
 
-        const file_size = try file.length(io_write);
-        try file.writePositionalAll(io_write, output.items, file_size);
+        const file_size = try file.length(self.io);
+        try file.writePositionalAll(self.io, output.items, file_size);
         self.current_bytes += output.items.len;
     }
 
@@ -137,15 +138,13 @@ fn currentSize(path: []const u8, io: std.Io) u64 {
     return stat.size;
 }
 
-fn ensureParentDirectory(path: []const u8) !void {
+fn ensureParentDirectory(path: []const u8, io: std.Io) !void {
     if (std.fs.path.dirname(path)) |dir_name| {
-        const io = std.Io.Threaded.global_single_threaded.*.io();
         try std.Io.Dir.cwd().createDirPath(io, dir_name);
     }
 }
 
-fn openAppendFile(path: []const u8) !std.Io.File {
-    const io = std.Io.Threaded.global_single_threaded.*.io();
+fn openAppendFile(path: []const u8, io: std.Io) !std.Io.File {
     const file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => try std.Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false }),
         else => return err,

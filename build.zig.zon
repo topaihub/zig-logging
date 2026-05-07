@@ -5,8 +5,7 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .@"zig-release" = .{
-            .url = "https://github.com/topaihub/zig-release/archive/48af15fb5a23f428568f2e441258eadbdb8260d2.tar.gz",
-            .hash = "zig_release-0.2.0-nnPfHUCSAAAiGXBG8Yy_RkkeirlSYfUGaAkGY2izdzT9",
+            .path = "../zig-release",
         },
     },
     .paths = .{

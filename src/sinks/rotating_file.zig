@@ -33,21 +33,20 @@ pub const RotatingFileSink = struct {
     current_part: u32 = 0,
     total_records: u64 = 0,
     dropped_records: u64 = 0,
+    io: std.Io,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, cfg: RotatingFileSinkConfig) Self {
-        const io = std.Io.Threaded.global_single_threaded.*.io();
+    pub fn init(allocator: std.mem.Allocator, cfg: RotatingFileSinkConfig, io: std.Io) Self {
         std.Io.Dir.cwd().createDirPath(io, cfg.log_dir) catch {};
-        return .{ .allocator = allocator, .config = cfg };
+        return .{ .allocator = allocator, .config = cfg, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
         while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
         if (self.current_file) |*f| {
-            const io = std.Io.Threaded.global_single_threaded.*.io();
-            f.close(io);
+            f.close(self.io);
         }
         self.current_file = null;
     }
@@ -159,8 +158,7 @@ pub const RotatingFileSink = struct {
         const rendered = allocating_writer.toArrayList();
 
         // Get today's date
-        const io = std.Io.Threaded.global_single_threaded.*.io();
-        const ts = std.Io.Timestamp.now(io, .real);
+        const ts = std.Io.Timestamp.now(self.io, .real);
         const epoch_secs: u64 = @intCast(@divFloor(ts.nanoseconds, std.time.ns_per_s));
         var date_buf: [10]u8 = undefined;
         epochToDate(epoch_secs, &date_buf);
@@ -171,8 +169,7 @@ pub const RotatingFileSink = struct {
 
         if (self.current_file == null or date_changed or size_exceeded) {
             if (self.current_file) |*f| {
-                const io_close = std.Io.Threaded.global_single_threaded.*.io();
-                f.close(io_close);
+                f.close(self.io);
             }
 
             if (date_changed) {
@@ -194,17 +191,14 @@ pub const RotatingFileSink = struct {
                     self.config.log_dir, self.config.prefix, self.current_date, self.current_part,
                 }) catch return;
 
-            const io_local = std.Io.Threaded.global_single_threaded.*.io();
-            std.Io.Dir.cwd().createDirPath(io_local, self.config.log_dir) catch {};
-            const file = std.Io.Dir.cwd().createFile(io_local, path, .{ .truncate = false }) catch {
+            std.Io.Dir.cwd().createDirPath(self.io, self.config.log_dir) catch {};
+            const file = std.Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false }) catch {
                 self.dropped_records += 1;
                 return;
             };
             // Seek to end for append
-            const io_stat = std.Io.Threaded.global_single_threaded.*.io();
-            const stat = file.stat(io_stat) catch {
-                const io_close2 = std.Io.Threaded.global_single_threaded.*.io();
-                file.close(io_close2);
+            const stat = file.stat(self.io) catch {
+                file.close(self.io);
                 self.dropped_records += 1;
                 return;
             };
@@ -214,8 +208,7 @@ pub const RotatingFileSink = struct {
 
         // Write
         if (self.current_file) |f| {
-            const io_write = std.Io.Threaded.global_single_threaded.*.io();
-            f.writeStreamingAll(io_write, rendered.items) catch {
+            f.writeStreamingAll(self.io, rendered.items) catch {
                 self.dropped_records += 1;
                 return;
             };
@@ -277,7 +270,7 @@ test "rotating file sink init and status" {
         .log_dir = "_test_rotating_logs",
         .prefix = "test",
         .max_file_bytes = 1024,
-    });
+    }, std.testing.io);
     defer s.deinit();
     defer std.Io.Dir.cwd().deleteTree(std.testing.io, "_test_rotating_logs") catch {};
 

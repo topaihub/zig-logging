@@ -40,6 +40,8 @@ pub const LogConfig = struct {
     redact: RedactMode = .safe,
     /// Trace context 提供者
     trace_provider: ?TraceContextProvider = null,
+    /// IO 实例（用于文件操作，默认 global_single_threaded）
+    io: ?std.Io = null,
 
     pub const ConsoleConfig = struct {
         style: sink_impls.console.ConsoleStyle = .pretty,
@@ -148,8 +150,8 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     // JSON 文件
     if (config.file) |f| {
         const s = try allocator.create(sink_impls.jsonl_file.JsonlFileSink);
-        const io = std.Io.Threaded.global_single_threaded.*.io();
-        s.* = try sink_impls.jsonl_file.JsonlFileSink.init(allocator, f.path, f.max_bytes, io);
+        const file_io = config.io orelse std.Io.Threaded.global_single_threaded.*.io();
+        s.* = try sink_impls.jsonl_file.JsonlFileSink.init(allocator, f.path, f.max_bytes, file_io);
         managed.file_sink = s;
         sink_buf[sink_count] = s.asLogSink();
         sink_count += 1;
@@ -167,12 +169,13 @@ pub fn create(allocator: std.mem.Allocator, config: LogConfig) !ManagedLogger {
     // 轮转文件
     if (config.rotating) |r| {
         const s = try allocator.create(sink_impls.rotating_file.RotatingFileSink);
+        const rot_io = config.io orelse std.Io.Threaded.global_single_threaded.*.io();
         s.* = sink_impls.rotating_file.RotatingFileSink.init(allocator, .{
             .log_dir = r.log_dir,
             .prefix = r.prefix,
             .max_file_bytes = r.max_file_bytes,
             .format = r.format,
-        });
+        }, rot_io);
         managed.rotating_sink = s;
         sink_buf[sink_count] = s.asLogSink();
         sink_count += 1;
